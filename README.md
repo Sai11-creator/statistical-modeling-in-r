@@ -1,6 +1,6 @@
 # Statistical Modeling in R: Multiple Linear Regression and ANCOVA
 
-This repository contains an academic statistics project completed in R and awarded full marks. It presents two applied modeling case studies:
+This repository contains an academic statistics project at CentraleSupélec with Professor Lemler completed in R and awarded full marks. It presents two applied modeling case studies:
 
 1. **Multiple linear regression on prostate cancer data** — exploratory analysis, manual OLS estimation, inference, variable selection, confidence and prediction intervals, and model diagnostics.
 2. **ANCOVA for infusion-system alarm delays** — transformation of the flow-rate relationship, system-specific regression lines, nested-model testing, model selection, diagnostics, and confidence intervals.
