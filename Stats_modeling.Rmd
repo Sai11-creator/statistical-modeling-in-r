@@ -1,0 +1,649 @@
+---
+title: "Statistical Modeling in R: Multiple Linear Regression and ANCOVA"
+subtitle: "Two case studies in regression modeling, model selection, and diagnostics"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+date: "2026-04-27"
+author: "Sai ZHANG"
+---
+
+# Project Overview
+
+This project presents two statistical modeling case studies in R. The first uses multiple linear regression to explain log prostate-specific antigen (`lpsa`) from clinical covariates. The second uses ANCOVA to compare infusion systems while modeling alarm delay as a function of inverse flow rate.
+
+The analysis covers exploratory data analysis, model specification, manual estimation, inference, variable selection, nested-model comparison, and model diagnostics.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.align = "center"
+)
+```
+
+## Case Study 1 — Multiple Linear Regression on Prostate Cancer Data
+
+### Exploratory Data Analysis
+```{r question1}
+Prostate = read.table("Prostate.txt",sep=";",header=T,dec=".")
+head(Prostate)
+dim(Prostate)
+```
+The `Prostate` data frame contains 97 observations and 9 variables.
+```{r}
+str(Prostate)
+summary(Prostate)
+pairs(Prostate)
+cor(Prostate)
+```
+```{r corrplot, message=FALSE, warning=FALSE}
+library(corrplot)
+corrplot(cor(Prostate))
+```
+
+#### Univariate Analysis
+
+The response variable is `lpsa`. Most predictors are quantitative, while `svi` is binary and `gleason` takes only a small number of discrete values.
+
+The `lpsa` variable ranges from -0.43 to 5.58, with a mean of approximately 2.48. The variables `lcavol`, `lweight`, `lbph`, and `lcp` are logarithmic transformations. The variable `svi` equals 1 for only 21 of the 97 observations, meaning that most patients do not present seminal vesicle invasion. The variable `pgg45` is highly dispersed, with values ranging from 0 to 100.
+
+#### Bivariate Analysis
+
+The correlation analysis shows that `lcavol` is the variable most strongly correlated with `lpsa`, with a correlation of approximately 0.73. This indicates a strong positive association between tumor volume and PSA level. The variables `svi`, `lcp`, `pgg45`, `gleason`, and `lweight` are also positively correlated with `lpsa`, although more moderately.
+
+By contrast, `age` and `lbph` are only weakly correlated with `lpsa`, with correlations of approximately 0.17 and 0.18. They therefore appear to have a weaker direct relationship with the response variable.
+
+There are also substantial correlations among some predictors, particularly between `gleason` and `pgg45`, between `lcavol` and `lcp`, and between `svi` and `lcp`. This suggests potential redundancy among predictors in a multiple regression model. Predictor selection should therefore not rely only on marginal correlations with `lpsa`; correlations among the predictors themselves must also be considered.
+
+The scatterplot matrix confirms that `lpsa` is most clearly positively associated with `lcavol`. The scatterplot of `lpsa` against `lcavol` displays a clear increasing trend: as `lcavol` increases, `lpsa` tends to increase as well.
+
+Positive trends are also visible between `lpsa` and several other variables, including `svi`, `lcp`, `pgg45`, `gleason`, and `lweight`, although these relationships are less pronounced than the relationship with `lcavol`.
+
+Because `svi` is binary, plots involving `svi` form two vertical or horizontal bands corresponding to values 0 and 1. This reflects the fact that `svi` is not a continuous quantitative variable.
+
+The variable `gleason` also takes only a small number of values, mainly 6 and 7, so the corresponding scatterplots appear in bands as well.
+
+Overall, `pairs(Prostate)` visually confirms the main conclusions from the correlation matrix: `lcavol` is the predictor most strongly associated with `lpsa`, while several predictors are correlated with one another. This dependence must be taken into account when selecting a regression model.
+
+### Model Specification
+
+The objective is to explain `lpsa` using the remaining variables. We consider the following multiple linear regression model:
+
+$$
+lpsa_i= \beta_0 + \beta_1  lcavol_i+ \beta_2  lweight_i+ \beta_3 age_i+ \beta_4 lbph_i + \beta_5 svi_i + \beta_6 lcp_i + \beta_7 gleason_i + \beta_8 pgg45_i +  \varepsilon_i
+$$
+
+The term \(\varepsilon_i\) represents the random error associated with observation \(i\). We assume that the errors are independent, centered, and have constant variance.
+
+### Manual OLS Estimation
+```{r }
+X=as.matrix(Prostate[,1:8])
+X=cbind(intercept=1,X)
+Y=as.matrix(Prostate$lpsa,ncol=1)
+beta.est=solve(t(X)%*%X)%*% t(X)%*%Y
+n=length(Y)
+p=ncol(X)
+sigma.est=sqrt(sum( (X%*%beta.est -Y)^2 )/(n-p))
+V= solve(t(X)%*%X) *sigma.est^2
+stddev=sqrt(diag(V))
+```
+
+In the code above, `beta.est` and `sigma.est` are the estimators used for the linear regression model.
+
+Using all eight predictors, the estimated full model is:
+
+$$
+\widehat{lpsa} = 0.6694 + 0.5870\,lcavol + 0.4545\,lweight - 0.0196\,age + 0.1071\,lbph + 0.7662\,svi - 0.1055\,lcp + 0.0451\,gleason + 0.0045\,pgg45
+$$
+```{r}
+t.stat = beta.est/stddev
+p.val = 2 * pt(-abs(t.stat), df = n - p)
+resultats.tests = data.frame(
+  beta_estime = as.vector(beta.est),
+  ecart_type = stddev,
+  statistique_t = t.stat,
+  p_valeur = p.val,
+  significatif_5 = ifelse(p.val < 0.05, "oui", "non")
+)
+resultats.tests
+```
+From the test statistics and p-values for the model coefficients, only three predictors appear significant at the 5% level: `lcavol`, `lweight`, and `svi`.
+
+We then compute the estimated log prostate-specific antigen level for the covariate values of the second observation:
+```{r}
+Yhat2 = X[2, ] %*% beta.est
+Yhat2
+```
+For all observations, the fitted values are:
+```{r}
+Yhat = X %*% beta.est
+Yhat
+```
+
+As expected, $Yhat[2] = Yhat2$.
+
+### Estimation with `lm()`
+```{r}
+model8=lm(lpsa~.,data=Prostate)
+summary(model8)
+names(model8)
+model8$coef
+```
+To verify the manual calculations, we compare the coefficients, residuals, and fitted values obtained from the matrix formulas with those returned by R's `lm()` function.
+
+**Coefficients:**
+```{r}
+model8$coef-beta.est
+```
+**Residuals:**
+```{r}
+Y-Yhat-model8$residuals
+```
+**Fitted values:**
+```{r}
+Yhat-model8$fitted.values
+```
+
+The three comparisons show that the manual matrix calculations are numerically equivalent to the results returned by `lm()`.
+```{r prediction}
+Yhat-predict(model8)
+```
+
+The fitted values obtained manually from the matrix calculation $X\hat{\beta}$ are also essentially identical to those returned by `predict(model8)`.
+
+### Confidence and Prediction Intervals
+
+#### Confidence Intervals for Regression Coefficients
+```{r}
+alpha = 0.05
+
+beta.est = coef(model8)
+stddev = sqrt(diag(vcov(model8)))
+
+tcrit = qt(1 - alpha/2, df = model8$df.residual)
+
+IC95 = cbind(
+  estimation = beta.est,
+  borne_inf = beta.est - tcrit * stddev,
+  borne_sup = beta.est + tcrit * stddev
+)
+
+IC95
+```
+```{r}
+confint(model8)
+```
+
+The manually computed 95% confidence intervals agree with those returned by `confint`. The interval for `age` contains 0, indicating that `age` is not statistically significant at the 5% level. By contrast, the interval for `lcavol` does not contain 0, indicating statistical significance. Applying the same reasoning to the remaining predictors identifies `lcavol`, `lweight`, and `svi` as significant variables.
+
+#### Confidence Interval for the Mean Response
+```{r}
+new.obs = data.frame(
+  lcavol = 0.75,
+  lweight = 3.43,
+  age = 62,
+  lbph = -1.39,
+  svi = 0,
+  lcp = -1.39,
+  gleason = 6,
+  pgg45 = 0
+)
+
+predict(model8, newdata = new.obs, interval = "confidence", level = 0.95)
+```
+#### Manual Confidence-Interval Calculation
+```{r}
+x0 = c(1, 0.75, 3.43, 62, -1.39, 0, -1.39, 6, 0)
+
+yhat = sum(x0 * coef(model8))
+
+se.mean = sqrt(t(x0) %*% vcov(model8) %*% x0)
+
+tcrit = qt(0.975, df = model8$df.residual)
+
+IC = c(
+  fit = yhat,
+  lwr = yhat - tcrit * se.mean,
+  upr = yhat + tcrit * se.mean
+)
+
+IC
+```
+
+#### Prediction Interval for an Individual Observation
+```{r}
+predict(
+  model8,
+  newdata = data.frame(
+    lcavol = 0.75,
+    lweight = 3.43,
+    age = 62,
+    lbph = -1.39,
+    svi = 0,
+    lcp = -1.39,
+    gleason = 6,
+    pgg45 = 0
+  ),
+  interval = "prediction",
+  level = 0.95
+)
+
+```
+The prediction interval is wider than the confidence interval because it targets an individual future value of `lpsa` rather than the mean response at the specified covariate values. It therefore incorporates both parameter-estimation uncertainty and residual variability. Although the predicted mean is approximately 1.72, an individual value can plausibly range from 0.287 to 3.152 at the 95% level.
+
+### Hypothesis Testing and Variable Selection
+
+#### Overall Significance of the Regression
+
+We use an F-test to determine whether the regression model is globally significant. The hypotheses are:
+
+$$
+H_0 : \beta_1 = \beta_2 = \cdots = \beta_8 = 0
+$$
+
+against
+
+$$
+H_1 : \text{at least one coefficient } \beta_j \text{ is non-zero.}
+$$
+```{r}
+SCRH1= sum(model8$resid^2 )
+SCRH0 = sum((Prostate$lpsa-mean(Prostate$lpsa))^2)
+
+F= ((SCRH0-SCRH1)/(p-1))/(SCRH1/(n-p)); F 
+qf(1-alpha,p-1,model8$df.residual) 
+pf(F,p-1,model8$df.residual,lower.tail=FALSE) 
+```
+
+The p-value is far below 0.05, so the regression is globally significant.
+
+#### Comparing a Single-Predictor Model with the Full Model
+```{r anova}
+model1=lm(lpsa~lcavol,data=Prostate)
+anova(model1,model8)
+```
+#### Sequential ANOVA and Reduced-Model Selection
+```{r}
+SCR_reduit = sum(model1$resid^2)
+p_reduit = length(coef(model1))
+q = p - p_reduit
+Fobs = ((SCR_reduit - SCRH1) / q) / 
+       (SCRH1 / (n - p))
+pvalue = 1 - pf(Fobs, df1 = q, df2 = n - p)
+
+Fobs
+pvalue
+```
+```{r}
+anova(model8)
+```
+
+The sequential analysis of variance for the full model indicates that `lcavol`, `lweight`, and `svi` contribute significantly to explaining `lpsa`. By contrast, `age`, `lbph`, `lcp`, `gleason`, and `pgg45` do not appear significant once the other variables are taken into account.
+
+We therefore consider the reduced model:
+
+$$
+lpsa \sim lcavol + lweight + svi.
+$$
+```{r}
+lmf=lm(lpsa~lcavol+lweight+svi,data=Prostate)
+anova(lmf,model8)
+```
+
+We compare this reduced model with the full model. The test asks whether the removed variables—`age`, `lbph`, `lcp`, `gleason`, and `pgg45`—provide significant additional information beyond `lcavol`, `lweight`, and `svi`.
+
+The hypotheses are:
+
+$$
+H_0 : \beta_{age} = \beta_{lbph} = \beta_{lcp} = \beta_{gleason} = \beta_{pgg45} = 0
+$$
+
+against:
+
+$$
+H_1 : \text{at least one of these coefficients is non-zero.}
+$$
+
+The comparison `anova(lmf, model8)` gives a p-value of approximately \(0.217\). Since this is greater than \(0.05\), we do not reject \(H_0\). The removed variables therefore do not significantly improve the model.
+
+We retain the reduced model:
+
+$$
+lpsa \sim lcavol + lweight + svi.
+$$
+
+### Model Diagnostics
+```{r}
+#fenetre  2x2
+par(mfrow=c(2,2), oma=c(0,0,2,0))
+#graphe des observés
+plot(lmf$fitted,Prostate$lpsa,main="observed")
+abline(0,1)
+#graphe des résidus
+plot(lmf$fitted,lmf$residuals,main="Residuals")
+library(MASS) 
+points(lmf$fitted,stdres(lmf), col=2,pch=2 )
+points(lmf$fitted,studres(lmf),col=3,pch=3)
+abline(h=2)
+abline(h=-2)
+legend("bottomright",c("resid", "stdres", "studres"),col=1:3, pch=1:3,
+cex=0.5)
+#graphe quantile
+qqnorm(studres(lmf),main="Quantile-quantile plot")
+qqline(stdres(lmf))
+#titre
+title(main="Validation en régression linéaire multiple", outer=TRUE)
+```
+The first plot compares observed `lpsa` values with the fitted values from the model. The relationship is clearly increasing, indicating that the model captures a substantial part of the variation in `lpsa`. The points are not perfectly aligned with the identity line, however, so some variability remains unexplained.
+
+The residuals-versus-fitted plot is used to assess whether residuals are randomly distributed around 0. Here, the residuals appear broadly scattered around 0 without a strong systematic pattern, suggesting that the linearity assumption is reasonable. A few observations are relatively distant from 0, but none appears extreme; most residuals are approximately between -2 and 2.
+
+The Q-Q plot is used to assess residual normality. The points are generally close to the reference line, suggesting that the residual distribution is approximately normal.
+```{r}
+par(mfrow=c(2,2), oma=rep(0,4))
+plot(lmf)
+```
+The residuals are generally centered around 0. The red smooth curve is nearly horizontal, with only mild curvature, suggesting that the linearity assumption is acceptable even though some variation remains unexplained.
+
+In the Q-Q plot, most points lie close to the reference line. This indicates that the standardized residuals are approximately normally distributed. There are small deviations in the tails, particularly for observations 39, 5, and 96, but they do not appear severe.
+
+The Scale-Location plot assesses the constant-variance assumption. The points are fairly dispersed, and the red curve is not perfectly horizontal: it decreases and then rises slightly. This may indicate mild heteroscedasticity, but the effect does not appear substantial.
+
+Most observations have low leverage. Observation 32 has higher leverage than the others and may therefore exert more influence on the fitted model. However, it does not clearly cross the Cook's-distance contours, so it is not necessarily problematic.
+```{r}
+model8 = lm(lpsa ~ ., data = Prostate)
+
+model_aic = step(model8, direction = "both", trace = 0)
+model_bic = step(model8, direction = "both", k = log(nrow(Prostate)), trace = 0)
+
+model_aic
+model_bic
+```
+
+AIC selects the model `lpsa ~ lcavol + lweight + age + lbph + svi`, while BIC selects the more parsimonious model `lpsa ~ lcavol + lweight + svi`.
+
+## Case Study 2 — ANCOVA for Infusion-System Alarm Delays
+
+### Data and Experimental Design
+```{r}
+perf=read.table("perfusion.txt",header=TRUE, row.names=1,skip=1)
+perf$systeme = as.factor(perf$systeme)
+summary(perf)
+head(perf)
+dim(perf)
+str(perf)
+```
+
+### Exploratory Analysis
+
+#### Experimental Balance
+```{r}
+table(perf$systeme, perf$debit)
+tapply(perf$delai, list(perf$systeme, perf$debit), mean)
+```
+There are three measurements for each system-flow-rate combination. The experimental design is therefore balanced: every system is observed at the same flow rates and with the same number of replicates.
+
+The table of means shows that, for every system, alarm delay decreases as flow rate increases. This is consistent with the expected behavior: higher flow rates lead to faster alarm activation. The systems also behave differently. System \(S3\) has the largest mean delays, system \(S2\) has intermediate delays, and systems \(S1\) and \(S4\) have very similar mean delays.
+
+#### Visualization by System
+```{r plot}
+library(lattice)
+xyplot(delai~debit|systeme,data=perf)
+par(mfrow=c(3,1))
+```
+
+#### Linearizing the Relationship
+
+The flow rate appears to vary approximately as the inverse of the delay. Using `1/debit` as a transformed predictor therefore makes it possible to study the relationship using a linear model.
+
+#### Visualization After Transformation
+```{r}
+perf$invdebit=1/perf$debit
+par(mfrow=c(1,1))
+cols_systeme = as.numeric(perf$systeme)
+plot(perf$invdebit,perf$delai,col=cols_systeme,
+     pch=cols_systeme,
+     main="Alarm time for different infusion systems",
+     xlab="Inverse flow rate",ylab="Time before alarm")
+legend("topleft",c("S1", "S2", "S3", "S4"),pch=c(1:4),col=c(1:4))
+```
+
+### ANCOVA Model
+
+We use the following ANCOVA model:
+
+$$
+\text{delai}_{ik} = (\mu + a_k) + (\beta + b_k)\,\text{invdebit}_i + \varepsilon_{ik}
+$$
+
+where \( \text{invdebit}_i = \frac{1}{\text{debit}_i} \), \(\mu\) is the average intercept, \(\beta\) is the average slope associated with inverse flow rate, \(a_k\) is the effect of system \(k\) on the intercept, \(b_k\) is the effect of system \(k\) on the slope, and \(\varepsilon_{ik}\) is the error term.
+
+### Model Estimation
+```{r}
+Mg=lm(delai~systeme*invdebit,data=perf)
+summary(Mg)
+anova(Mg)
+```
+In the theoretical ANCOVA formulation, the identifiability conditions can be expressed using sum-to-zero constraints:
+
+$$
+\sum_{k=1}^{4} a_k = 0
+\qquad \text{and} \qquad
+\sum_{k=1}^{4} b_k = 0.
+$$
+
+With R's `lm()` function, one factor level is instead used as the reference category, here \(S1\). The coefficients displayed by R therefore represent differences relative to \(S1\).
+```{r}
+Mg = lm(delai ~ systeme * invdebit, data = perf)
+
+plot(
+  perf$invdebit, perf$delai,
+  col = cols_systeme,
+  pch = cols_systeme,
+  xlab = "Inverse du débit",
+  ylab = "Délai",
+  main = "Droites d'ajustement selon le système"
+)
+
+co = coef(Mg)
+
+abline(co[1], co[5], col = 1, lwd = 2)
+
+for (i in 2:4) {
+  abline(co[1] + co[i], co[5] + co[4 + i], col = i, lwd = 2)
+}
+
+legend(
+  "topleft",
+  legend = c("S1", "S2", "S3", "S4"),
+  col = 1:4,
+  lwd = 2,
+  title = "Système"
+)
+```
+
+
+```{r}
+Mgbis=lm(delai~systeme+systeme:invdebit,data=perf)
+summary(Mgbis)
+anova(Mgbis)
+```
+The two model parameterizations are equivalent in terms of fitted values. The difference is that the second formulation does not include a separate overall `invdebit` effect: the slopes are represented directly through the system-specific terms.
+
+### Model Validation
+```{r}
+par(mfrow=c(1,2),oma=c(0,0,0,0))  
+
+res_Mg = rstudent(Mg)
+
+plot(perf$invdebit,res_Mg,
+     col=cols_systeme)
+abline(h=2,lty=2); abline(h=-2,lty=2)
+
+qqnorm(res_Mg,main="graphe Q-Q")
+qqline(res_Mg)
+
+shapiro.test(res_Mg)
+```
+The Shapiro-Wilk test gives \(W = 0.9789\) and a p-value of \(0.1263 > 0.05\). We therefore do not reject the null hypothesis of normality for the studentized residuals of the full model \(Mg\).
+
+### Nested Model Comparison
+
+We first test whether all systems can be represented by the same regression line.
+
+The null hypothesis corresponds to a common line for all systems:
+
+$$
+H_0 : a_1 = a_2 = a_3 = a_4 = 0
+\quad \text{and} \quad
+b_1 = b_2 = b_3 = b_4 = 0.
+$$
+
+The alternative hypothesis is:
+
+$$
+H_1 : \text{at least one parameter } a_k \text{ or } b_k \text{ is non-zero.}
+$$
+
+The test statistic is:
+
+$$
+F =
+\frac{(SCR_0 - SCR_g)/(p_g - p_0)}
+{SCR_g/(n - p_g)}.
+$$
+
+Under \(H_0\),
+
+$$
+F \sim \mathcal{F}(p_g - p_0,\; n - p_g).
+$$
+```{r}
+M0 = lm(delai ~ invdebit, data = perf)
+
+SCR0 = sum(M0$resid^2)
+SCRg = sum(Mg$resid^2)
+
+n = nrow(perf)
+p0 = length(coef(M0))
+pg = length(coef(Mg))
+
+Fobs = ((SCR0 - SCRg) / (pg - p0)) / (SCRg / (n - pg))
+
+pvalue = pf(Fobs, df1 = pg - p0, df2 = n - pg, lower.tail = FALSE)
+
+Fobs
+pvalue
+
+anova(M0, Mg)
+
+```
+The resulting p-value is far below \(0.05\) (\(6.5\times10^{-91}\)). We therefore reject the hypothesis that all systems share the same regression line. The infusion systems do not follow the same relationship between alarm delay and inverse flow rate, so the full ANCOVA model is preferred to the reduced model with a single common line.
+
+We next compare several constrained submodels with the full model.
+```{r}
+M2 = lm(delai ~ systeme:invdebit, data = perf); summary(M2)
+anova(M2, Mg)
+
+M3 = lm(delai ~ systeme + invdebit, data = perf);summary(M3)
+anova(M3, Mg)
+
+perf$systeme14 = perf$systeme
+perf$systeme14[perf$systeme == "S4"] = "S1"
+M4 = lm(delai ~ systeme14 * invdebit, data = perf);summary(M4)
+anova(M4, Mg)
+
+perf$ord23 = perf$systeme
+perf$ord23[perf$systeme == "S2"] = "S3"
+M5 = lm(delai ~ ord23 + invdebit + systeme14:invdebit, data = perf)
+summary(M5)
+anova(M5, Mg)
+```
+We compare each submodel with the full model:
+
+$$
+Mg : \text{delai} \sim \text{systeme} * \text{invdebit}.
+$$
+
+The full model allows each system to have its own regression line.
+
+For model \(M2\), we assume a common intercept across systems but allow different slopes:
+
+$$
+M2 : \text{delai} \sim \text{systeme}:\text{invdebit}
+$$
+
+Compared with the full model \(Mg\), the test gives a p-value of approximately \(7.91 \times 10^{-5}\). Since this is below \(0.05\), we reject \(M2\). The intercepts cannot be treated as identical across all systems.
+
+For model \(M3\), we assume equal slopes across systems:
+
+$$
+M3 : \text{delai} \sim \text{systeme} + \text{invdebit}.
+$$
+
+The comparison with \(Mg\) gives a p-value below \(2.2 \times 10^{-16}\). We therefore strongly reject \(M3\): the slopes differ across systems.
+
+For model \(M4\), we assume that systems \(S1\) and \(S4\) share the same regression line, while the others remain distinct. The comparison with \(Mg\) gives a p-value of approximately \(0.683\), which is above \(0.05\). We therefore do not reject \(M4\), and the data are consistent with \(S1\) and \(S4\) sharing the same regression line.
+
+For model \(M5\), we retain the assumption \(S1 = S4\) and additionally impose equal intercepts for \(S2\) and \(S3\). The comparison with \(Mg\) gives a p-value of approximately \(0.82\), again well above \(0.05\). We therefore do not reject \(M5\).
+
+The selected model is therefore \(M5\).
+```{r}
+res_M5 = rstudent(M5)
+
+par(mfrow=c(1,2),oma=c(0,0,0,0))
+
+plot(fitted(M5), res_M5,
+     xlab = "Valeurs ajustées",
+     ylab = "Résidus studentisés",
+     main = "Résidus studentisés")
+abline(h=0,lty=2)
+abline(h=2,lty=2)
+abline(h=-2,lty=2)
+
+qqnorm(res_M5,main="graphe Q-Q")
+qqline(res_M5)
+
+shapiro.test(res_M5)
+```
+
+The Shapiro-Wilk test applied to the studentized residuals of \(M5\) gives a p-value of approximately \(0.126\), which is above \(0.05\). We therefore do not reject the normality assumption. The diagnostic plots do not reveal any major issue; apart from the tails, the Q-Q plot follows the reference line reasonably well.
+
+We therefore retain \(M5\) as the final model.
+
+### Confidence Interval for the Difference Between Systems
+
+For a flow rate of 5 ml/h, `invdebit = 1/5 = 0.2`. We compute a 95% confidence interval for the difference of interest:
+```{r}
+
+L = rep(0, length(coef(M5)))
+names(L) = names(coef(M5))
+
+L["invdebit:systeme14S2"] = 0.2
+L["invdebit:systeme14S3"] = -0.2
+
+diff.est = sum(L * coef(M5))
+
+se.diff = sqrt(t(L) %*% vcov(M5) %*% L)
+
+tcrit = qt(0.975, df = M5$df.residual)
+
+IC.diff = c(
+  estimation = diff.est,
+  borne_inf = diff.est - tcrit * se.diff,
+  borne_sup = diff.est + tcrit * se.diff
+)
+
+IC.diff
+```
+The 95% confidence interval is:
+
+$$
+IC_{95\%} = [-341.58 \ ; \ -309.28].
+$$
+
+The interval is entirely negative and does not contain \(0\). We therefore conclude that, at a flow rate of \(5\) ml/h, the mean alarm delay for system \(S2\) is significantly lower than for system \(S3\). More precisely, system \(S2\) triggers the alarm approximately \(325\) time units earlier than system \(S3\), on average.
+
+## Conclusion
+
+Across the two case studies, the analysis combines model formulation, estimation, statistical inference, model selection, and diagnostic validation. The prostate-cancer analysis supports a reduced linear model based on `lcavol`, `lweight`, and `svi`, while the infusion-system analysis supports the constrained ANCOVA model \(M5\) after comparison with the full model and several nested alternatives.
